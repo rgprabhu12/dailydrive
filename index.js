@@ -15,6 +15,7 @@ const SpotifyWebApi = require("spotify-web-api-node");
 
 const TOKEN_FILE = ".spotify-token.json";
 const CONFIG_FILE = "config.yaml";
+const STATE_FILE = "state.json";
 const DRY_RUN = process.argv.includes("--dry-run");
 
 // =============================================================================
@@ -39,6 +40,19 @@ function loadToken() {
 
 function saveToken(tokenData) {
   fs.writeFileSync(TOKEN_FILE, JSON.stringify(tokenData, null, 2));
+}
+
+function loadState() {
+  if (!fs.existsSync(STATE_FILE)) return {};
+  try {
+    return JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+function saveState(state) {
+  fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
 }
 
 function shuffle(array) {
@@ -160,6 +174,35 @@ async function fetchMusicTracks(spotifyApi, musicConfig) {
   return allTracks;
 }
 
+async function fetchGenreTracks(spotifyApi, genres, count) {
+  const tracks = [];
+  const perGenre = Math.ceil(count / genres.length);
+
+  for (const genre of genres) {
+    console.log(`🎵 Searching for ${genre} tracks...`);
+    try {
+      const data = await spotifyApi.searchTracks(`genre:${genre}`, {
+        limit: Math.min(perGenre, 10), // Dev Mode caps at 10 per query
+        market: "US",
+      });
+
+      for (const track of data.body.tracks.items) {
+        tracks.push({
+          uri: track.uri,
+          name: track.name,
+          artist: track.artists?.map((a) => a.name).join(", ") || "Unknown",
+          type: "track",
+        });
+      }
+      console.log(`    Found ${data.body.tracks.items.length} tracks`);
+    } catch (err) {
+      console.error(`    ⚠️  Failed to search genre ${genre}: ${err.message}`);
+    }
+  }
+
+  return shuffle(tracks).slice(0, count);
+}
+
 function mixContent(episodes, tracks, pattern) {
   const mixed = [];
   let episodeIndex = 0;
@@ -266,7 +309,29 @@ async function main() {
 
   // Fetch content
   const episodes = await fetchPodcastEpisodes(spotifyApi, config.podcasts || []);
-  const tracks = await fetchMusicTracks(spotifyApi, config.music || {});
+
+  // State cache: check if episodes have changed since last run
+  const state = loadState();
+  const currentEpisodeUris = episodes.map((e) => e.uri).sort().join(",");
+  const previousEpisodeUris = state.episode_uris || "";
+
+  if (!DRY_RUN && currentEpisodeUris === previousEpisodeUris && episodes.length > 0) {
+    console.log("\n⏭️  No new podcast episodes detected. Playlist unchanged.");
+    console.log("   (Same episodes as last update — skipping to avoid disruption)\n");
+    process.exit(0);
+  }
+
+  // Fetch music from playlists and/or genre search
+  const musicConfig = config.music || {};
+  let tracks = await fetchMusicTracks(spotifyApi, musicConfig);
+
+  // Genre-based discovery: supplement or replace playlist tracks
+  if (musicConfig.genres && musicConfig.genres.length > 0) {
+    const genreCount = musicConfig.genre_count || musicConfig.total_songs || 15;
+    const genreTracks = await fetchGenreTracks(spotifyApi, musicConfig.genres, genreCount);
+    tracks = shuffle([...tracks, ...genreTracks]).slice(0, musicConfig.total_songs || 15);
+    console.log(`🎵 Combined ${tracks.length} total songs (playlists + genre search)`);
+  }
 
   if (episodes.length === 0 && tracks.length === 0) {
     console.error("❌ No content found! Check your config.yaml settings.");
@@ -279,6 +344,15 @@ async function main() {
 
   // Update the playlist
   await updatePlaylist(spotifyApi, config.playlist_id, mixed);
+
+  // Persist state for next run
+  if (!DRY_RUN) {
+    saveState({
+      episode_uris: currentEpisodeUris,
+      last_updated: new Date().toISOString(),
+    });
+    console.log("💾 State saved to state.json");
+  }
 }
 
 main().catch((err) => {

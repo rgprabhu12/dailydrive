@@ -52,6 +52,14 @@ music:
     # - name: "Chill Vibes"
     #   id: "another-playlist-id"
 
+  # Genre-based music discovery (optional)
+  # Finds tracks by genre via Spotify search — great for a public "radio" feel
+  # without relying on any individual user's listening history.
+  # genres:
+  #   - indie
+  #   - pop
+  #   - electronic
+
   # How many songs to include total
   # (The original Daily Drive had ~19 songs and ~5 podcast segments)
   total_songs: 19
@@ -73,6 +81,9 @@ mix_pattern: "PMMMM"
 
 # --- Schedule ---
 # When to refresh (used by the systemd timer, not the script itself)
+# Twice-daily updates: morning (04:00) catches overnight drops, evening (16:00) refreshes for commute
 schedule:
-  time: "05:00"          # 24-hour format
+  times:
+    - "04:00"            # Morning: captures overnight podcast drops
+    - "16:00"            # Evening: refreshes for the commute home
   timezone: "America/New_York"
