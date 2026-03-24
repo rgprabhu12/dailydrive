@@ -154,7 +154,7 @@ music:
     - singer-songwriter
 ```
 
-**Don't know your genres?** Run `npm run taste` to auto-detect them using AI (requires a [Demeterics](https://demeterics.ai) API key in `.env` — see [Taste Profile](#taste-profile) below).
+**Don't know your genres?** Run `npm run taste:google` to auto-detect them using AI for free (requires a [Google Gemini](https://aistudio.google.com/apikey) API key in `.env` — see [Taste Profile](#taste-profile) below). Or use `npm run taste` for the [Demeterics](https://demeterics.ai) version.
 
 When both top tracks and genres are enabled, songs are split **50/50** — half familiar favorites, half new discoveries.
 
@@ -217,7 +217,8 @@ That's it — your Daily Drive is back on autopilot.
 | `npm run setup` | Log in to Spotify (one time, or if token expires) |
 | `npm start` | Build/refresh the playlist now |
 | `npm test` | Dry run — shows what would happen without changing anything |
-| `npm run taste` | Auto-detect your music genres using AI |
+| `npm run taste` | Auto-detect your music genres using AI (Demeterics) |
+| `npm run taste:google` | Auto-detect your music genres using AI (Google Gemini — free) |
 
 ---
 
@@ -238,20 +239,38 @@ That's it — your Daily Drive is back on autopilot.
 
 Auto-detect your genre tags using AI. The script analyzes your Spotify listening history and suggests genre tags for your config.
 
-```bash
-npm run taste
-```
+### Option A: Google Gemini (free — recommended)
 
-### Setup
+Uses the Google Gemini API free tier. No credit card required.
+
+1. Go to **[aistudio.google.com/apikey](https://aistudio.google.com/apikey)**
+2. Sign in with your Google account
+3. Click **"Create API key"** and select or create a Google Cloud project
+4. Copy the key (starts with `AIza...`)
+5. Create a `.env` file in the dailydrive folder (or add to your existing one):
+   ```
+   GEMINI_API_KEY=AIza...your_key_here
+   ```
+6. Run:
+   ```bash
+   npm run taste:google
+   ```
+
+Free tier limits: 15 requests/minute, 1M tokens/day — more than enough for this.
+
+### Option B: Demeterics
+
+Uses the [Demeterics](https://demeterics.ai) API — an LLM observability platform that acts as a proxy to 50+ providers (OpenAI, Anthropic, Google, Groq, etc.). Beyond routing, Demeterics tracks cost, latency, and errors across every call with 50+ fields per request — useful if you're building AI into multiple projects and want one dashboard to monitor spending and performance. Integration is just a URL change (OpenAI-compatible), and prompt-level tags let you slice data by app, workflow, or customer. See [demeterics.ai/observability](https://demeterics.ai/observability) for details.
 
 1. Get an API key at [demeterics.ai](https://demeterics.ai)
-2. Create a `.env` file in the dailydrive folder:
+2. Add to `.env`:
    ```
    DEMETERICS_API_KEY=dmt_your_key_here
    ```
-3. Run `npm run taste` — it will add genres to your `config.yaml`
-
-### Key modes
+3. Run:
+   ```bash
+   npm run taste
+   ```
 
 | Mode | How | Fee |
 |------|-----|-----|

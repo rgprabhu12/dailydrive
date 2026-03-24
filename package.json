@@ -7,7 +7,8 @@
     "setup": "node setup.js",
     "start": "node index.js",
     "test": "node index.js --dry-run",
-    "taste": "node taste-profile.js"
+    "taste": "node taste-profile.js",
+    "taste:google": "node taste-profile-google.js"
   },
   "keywords": ["spotify", "daily-drive", "playlist", "podcast", "automation", "raspberry-pi", "orange-pi"],
   "license": "MIT",
