@@ -27,12 +27,15 @@ GIT_REPO="/home/pdeglon/patdeg/dailydrive"
 if [ -d "${GIT_REPO}/.git" ]; then
   echo "=== Auto-deploy: pulling latest code ===" >> "${LOG_FILE}"
   git -C "${GIT_REPO}" pull --ff-only >> "${LOG_FILE}" 2>&1 || echo "⚠️  Git pull failed (non-fatal, continuing with current code)" >> "${LOG_FILE}"
-  # Sync code files to /opt/dailydrive (skip config, tokens, state, node_modules)
+  # Sync code + config to /opt/dailydrive (skip tokens, state, node_modules)
   cp "${GIT_REPO}/index.js" "${DAILYDRIVE_DIR}/index.js"
   cp "${GIT_REPO}/setup.js" "${DAILYDRIVE_DIR}/setup.js"
   cp "${GIT_REPO}/taste-profile.js" "${DAILYDRIVE_DIR}/taste-profile.js"
   cp "${GIT_REPO}/package.json" "${DAILYDRIVE_DIR}/package.json"
   cp -r "${GIT_REPO}/scripts/"* "${DAILYDRIVE_DIR}/scripts/"
+  # Config lives in git repo (gitignored) — always sync to /opt so changes take effect
+  cp "${GIT_REPO}/config.yaml" "${DAILYDRIVE_DIR}/config.yaml"
+  [ -f "${GIT_REPO}/.env" ] && cp "${GIT_REPO}/.env" "${DAILYDRIVE_DIR}/.env"
   echo "=== Auto-deploy complete ===" >> "${LOG_FILE}"
 fi
 

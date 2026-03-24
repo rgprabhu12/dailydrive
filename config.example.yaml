@@ -31,6 +31,14 @@ playlist_id: "your-playlist-id-here"
 # Use position: first to always place a podcast at the start of the playlist
 # (great for news briefings like NPR News Now)
 podcasts:
+  # Optional: Daily welcome greeting for your playlist.
+  # A short "Welcome to Your Daily Drive, it's Monday March 24th..." intro.
+  # You can create your own welcome show (see unscarcity-podcast repo), or skip this.
+  # - name: "Daily Drive Welcome"
+  #   id: "your-welcome-show-id"
+  #   episodes: 1
+  #   position: first
+
   - name: "NPR News Now"
     id: "6BRSvIBNQnB68GuoXJRCnQ"
     episodes: 1
