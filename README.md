@@ -157,6 +157,7 @@ music:
 **Don't know your genres?** Run `npm run taste:google` to auto-detect them using AI for free (requires a [Google Gemini](https://aistudio.google.com/apikey) API key in `.env` — see [Taste Profile](#taste-profile) below). Or use `npm run taste` for the [Demeterics](https://demeterics.ai) version.
 
 When both top tracks and genres are enabled, songs are split **50/50** — half familiar favorites, half new discoveries.
+Every refresh builds a fresh song mix.
 
 ### Pull from existing playlists
 
@@ -166,6 +167,22 @@ music:
     - name: "My Chill Playlist"
       id: "your-playlist-id-here"
 ```
+
+### Add playlists only for the morning refresh
+
+Use `music.morning_playlists` for playlist sources that should appear in the morning refresh but not in the evening one:
+
+```yaml
+music:
+  playlists:
+    - name: "Always include"
+      id: "base-playlist-id"
+  morning_playlists:
+    - name: "Morning only"
+      id: "morning-playlist-id"
+```
+
+The script uses `schedule.times[0]` as the morning slot and `schedule.times[1]` as the evening slot in your configured timezone.
 
 ### Control the mix pattern
 
@@ -200,11 +217,14 @@ Set up a cron job so your playlist refreshes on its own:
 crontab -e
 ```
 
-Add this line (refreshes at 4 AM and 4 PM daily):
+Add these lines (refreshes at 4 AM and 4 PM daily):
 
 ```
-0 4,16 * * * cd /home/$USER/dailydrive && /usr/bin/node index.js >> /tmp/dailydrive.log 2>&1
+0 4 * * * cd /home/$USER/dailydrive && /usr/bin/node index.js >> /tmp/dailydrive.log 2>&1
+0 16 * * * cd /home/$USER/dailydrive && /usr/bin/node index.js >> /tmp/dailydrive.log 2>&1
 ```
+
+The first scheduled time is treated as the morning refresh and can include `music.morning_playlists`. The second is treated as the evening refresh and skips those sources.
 
 That's it — your Daily Drive is back on autopilot.
 

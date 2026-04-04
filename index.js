@@ -5,10 +5,9 @@
 // Builds your custom Daily Drive playlist by mixing podcasts and music.
 // This recreates Spotify's discontinued "Daily Drive" feature.
 //
-// Usage:  npm start                  (full refresh — new music + podcasts)
+// Usage:  npm start                  (scheduled refresh — new music + podcasts)
 //         npm test                   (dry run — shows what would happen)
 //         node index.js --dry-run
-//         node index.js --podcast-only  (hourly mode — fresh podcasts, reuses today's music)
 // =============================================================================
 
 // --- Node.js built-in modules ---
@@ -21,11 +20,10 @@ const SpotifyWebApi = require("spotify-web-api-node"); // Wraps the Spotify Web 
 // --- File paths used by the script ---
 const TOKEN_FILE = ".spotify-token.json";  // Stores your Spotify OAuth tokens (created by setup.js)
 const CONFIG_FILE = "config.yaml";         // Your configuration (podcasts, music, schedule, etc.)
-const STATE_FILE = "state.json";           // Caches last run's episode URIs to detect changes
+const STATE_FILE = "state.json";           // Stores last run metadata for visibility/debugging
 
 // Check command-line flags
 const DRY_RUN = process.argv.includes("--dry-run");       // Shows what would happen without changing the playlist
-const PODCAST_ONLY = process.argv.includes("--podcast-only"); // Hourly mode: only refresh podcasts, reuse saved music
 
 // =============================================================================
 // Helper Functions
@@ -63,23 +61,136 @@ function saveToken(tokenData) {
 }
 
 /**
- * Loads the state file that tracks which episodes were in the last playlist update.
- * Returns an empty object if the file doesn't exist or is corrupted.
- */
-function loadState() {
-  if (!fs.existsSync(STATE_FILE)) return {};
-  try {
-    return JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
-  } catch {
-    return {};
-  }
-}
-
-/**
- * Saves state to disk so the next run can compare episodes and skip if nothing changed.
+ * Saves the latest run metadata to disk.
  */
 function saveState(state) {
   fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+}
+
+/**
+ * Parses a HH:MM schedule string into minutes since midnight.
+ */
+function parseScheduleTime(label, value) {
+  if (typeof value !== "string" || !/^\d{2}:\d{2}$/.test(value)) {
+    throw new Error(`Invalid ${label} schedule time "${value}". Expected HH:MM.`);
+  }
+
+  const [hoursText, minutesText] = value.split(":");
+  const hours = Number(hoursText);
+  const minutes = Number(minutesText);
+
+  if (hours > 23 || minutes > 59) {
+    throw new Error(`Invalid ${label} schedule time "${value}". Expected HH:MM.`);
+  }
+
+  return hours * 60 + minutes;
+}
+
+/**
+ * Returns the current local time parts for the configured timezone.
+ */
+function getLocalTimeParts(date, timeZone) {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+  const parts = Object.fromEntries(
+    formatter
+      .formatToParts(date)
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, part.value])
+  );
+
+  return {
+    year: Number(parts.year),
+    month: Number(parts.month),
+    day: Number(parts.day),
+    hour: Number(parts.hour),
+    minute: Number(parts.minute),
+  };
+}
+
+/**
+ * Returns the current time, with DAILYDRIVE_NOW support for dry-run testing.
+ */
+function getCurrentTime() {
+  const nowSource = process.env.DAILYDRIVE_NOW ? new Date(process.env.DAILYDRIVE_NOW) : new Date();
+  if (Number.isNaN(nowSource.getTime())) {
+    throw new Error(`Invalid DAILYDRIVE_NOW value "${process.env.DAILYDRIVE_NOW}"`);
+  }
+  return nowSource;
+}
+
+/**
+ * Resolves whether this run should behave like the morning or evening refresh.
+ * schedule.times[0] is treated as morning and schedule.times[1] as evening.
+ */
+function resolveRefreshSlot(config) {
+  const schedule = config.schedule || {};
+  const times = Array.isArray(schedule.times) ? schedule.times : [];
+  const timeZone = schedule.timezone;
+
+  if (!timeZone) {
+    throw new Error("Missing schedule.timezone in config.yaml");
+  }
+  if (times.length < 2) {
+    throw new Error("schedule.times must contain at least two entries: morning then evening");
+  }
+
+  const morningTime = times[0];
+  const eveningTime = times[1];
+  const morningMinutes = parseScheduleTime("morning", morningTime);
+  const eveningMinutes = parseScheduleTime("evening", eveningTime);
+
+  if (eveningMinutes <= morningMinutes) {
+    throw new Error(
+      `schedule.times must be ordered morning then evening. Got ${morningTime} then ${eveningTime}.`
+    );
+  }
+
+  const nowSource = getCurrentTime();
+
+  let local;
+  try {
+    local = getLocalTimeParts(nowSource, timeZone);
+  } catch (err) {
+    throw new Error(`Invalid schedule.timezone "${timeZone}" in config.yaml`);
+  }
+  const currentMinutes = local.hour * 60 + local.minute;
+  const slot = currentMinutes >= eveningMinutes ? "evening" : "morning";
+
+  return {
+    slot,
+    timeZone,
+    currentTime: `${String(local.hour).padStart(2, "0")}:${String(local.minute).padStart(2, "0")}`,
+    currentDate: `${local.year}-${String(local.month).padStart(2, "0")}-${String(local.day).padStart(2, "0")}`,
+    morningTime,
+    eveningTime,
+  };
+}
+
+/**
+ * Builds the music config for this run. Morning refreshes can add extra playlists.
+ */
+function getEffectiveMusicConfig(config, refreshSlot) {
+  const musicConfig = config.music || {};
+  const sharedPlaylists = Array.isArray(musicConfig.playlists) ? musicConfig.playlists : [];
+  const morningPlaylists = Array.isArray(musicConfig.morning_playlists)
+    ? musicConfig.morning_playlists
+    : [];
+
+  return {
+    ...musicConfig,
+    playlists: refreshSlot === "morning"
+      ? [...sharedPlaylists, ...morningPlaylists]
+      : sharedPlaylists,
+  };
 }
 
 /**
@@ -176,6 +287,8 @@ async function fetchPodcastEpisodes(spotifyApi, podcasts) {
  */
 async function fetchMusicTracks(spotifyApi, musicConfig) {
   let allTracks = [];
+  const oneDayMs = 24 * 60 * 60 * 1000;
+  const now = getCurrentTime();
 
   // --- Source 1: Pull tracks from user-specified playlists ---
   if (musicConfig.playlists) {
@@ -191,6 +304,8 @@ async function fetchMusicTracks(spotifyApi, musicConfig) {
         const accessToken = spotifyApi.getAccessToken();
         let offset = 0;
         let hasMore = true;
+        let freshestAddedAt = null;
+        const playlistTracks = [];
 
         while (hasMore) {
           // IMPORTANT: We use the /items endpoint directly via fetch() because
@@ -209,10 +324,17 @@ async function fetchMusicTracks(spotifyApi, musicConfig) {
           const data = await res.json();
 
           for (const entry of data.items) {
+            if (entry.added_at) {
+              const addedAt = new Date(entry.added_at);
+              if (!Number.isNaN(addedAt.getTime()) && (!freshestAddedAt || addedAt > freshestAddedAt)) {
+                freshestAddedAt = addedAt;
+              }
+            }
+
             // The /items endpoint returns the content in entry.item (not entry.track)
             const track = entry.item;
             if (track && track.uri && track.type === "track") {
-              allTracks.push({
+              playlistTracks.push({
                 uri: track.uri,
                 name: track.name,
                 artist: track.artists?.map((a) => a.name).join(", ") || "Unknown",
@@ -225,9 +347,20 @@ async function fetchMusicTracks(spotifyApi, musicConfig) {
           hasMore = offset < data.total;
         }
 
-        console.log(
-          `    Found ${allTracks.length} tracks so far`
-        );
+        if (!freshestAddedAt) {
+          console.log("    ⏭️  Skipping playlist: couldn't determine when it was last updated");
+          continue;
+        }
+
+        if (now.getTime() - freshestAddedAt.getTime() > oneDayMs) {
+          console.log(
+            `    ⏭️  Skipping playlist: last track added ${freshestAddedAt.toISOString()}, more than 24 hours ago`
+          );
+          continue;
+        }
+
+        allTracks.push(...playlistTracks);
+        console.log(`    Found ${playlistTracks.length} fresh tracks from this playlist`);
       } catch (err) {
         console.error(
           `    ⚠️  Failed to fetch playlist ${playlist.name}: ${err.message}`
@@ -445,12 +578,18 @@ async function updatePlaylist(spotifyApi, playlistId, items) {
 // =============================================================================
 
 async function main() {
-  const mode = PODCAST_ONLY ? "podcast-only" : "full";
-  console.log(`\n🚗 Daily Drive — ${PODCAST_ONLY ? "Hourly podcast refresh" : "Full playlist rebuild"}...\n`);
-
   // Step 1: Load configuration and authentication token
   const config = loadConfig();
+  const refreshWindow = resolveRefreshSlot(config);
   const token = loadToken();
+
+  console.log(`\n🚗 Daily Drive — ${refreshWindow.slot} refresh...\n`);
+  console.log(
+    `🕒 Local time in ${refreshWindow.timeZone}: ${refreshWindow.currentDate} ${refreshWindow.currentTime}`
+  );
+  console.log(
+    `   Morning slot: ${refreshWindow.morningTime} | Evening slot: ${refreshWindow.eveningTime}`
+  );
 
   // Step 2: Create Spotify API client with your app credentials
   const spotifyApi = new SpotifyWebApi({
@@ -475,41 +614,19 @@ async function main() {
   // Step 5: Fetch the latest podcast episodes
   const episodes = await fetchPodcastEpisodes(spotifyApi, config.podcasts || []);
 
-  // Step 6: Check if episodes have changed since last run
-  // This prevents unnecessary playlist updates that would reset your listening position
-  const state = loadState();
+  // Step 6: Capture the current episode set for state/debugging
   const currentEpisodeUris = episodes.map((e) => e.uri).sort().join(",");
-  const previousEpisodeUris = state.episode_uris || "";
-
-  // In podcast-only mode, skip if episodes haven't changed (no point reshuffling)
-  // In full refresh mode, ALWAYS proceed — we want fresh music even if podcasts are the same
-  if (!DRY_RUN && PODCAST_ONLY && currentEpisodeUris === previousEpisodeUris && episodes.length > 0) {
-    console.log("\n⏭️  No new podcast episodes detected. Playlist unchanged.");
-    console.log("   (Same episodes as last update — skipping to avoid disruption)\n");
-    process.exit(0);
-  }
 
   // Step 7: Get music tracks
-  let tracks;
-
-  if (PODCAST_ONLY) {
-    // --- Podcast-only mode (hourly) ---
-    // Reuse the music tracks saved from the last full refresh.
-    // This keeps your music stable all day while swapping in fresh podcast episodes.
-    if (state.music_tracks && state.music_tracks.length > 0) {
-      tracks = state.music_tracks;
-      console.log(`🎵 Reusing ${tracks.length} saved music tracks from last full refresh`);
-    } else {
-      // No saved music — fall back to a full music fetch
-      // This happens on the very first run, or if state.json was deleted
-      console.log("⚠️  No saved music tracks found — falling back to full music fetch");
-      tracks = await fetchAllMusicTracks(spotifyApi, config);
-    }
-  } else {
-    // --- Full refresh mode (daily) ---
-    // Fetch fresh music from all sources (top tracks, playlists, genre discovery)
-    tracks = await fetchAllMusicTracks(spotifyApi, config);
+  const effectiveMusicConfig = getEffectiveMusicConfig(config, refreshWindow.slot);
+  if (
+    refreshWindow.slot === "morning"
+    && Array.isArray(config.music?.morning_playlists)
+    && config.music.morning_playlists.length > 0
+  ) {
+    console.log(`🌅 Including ${config.music.morning_playlists.length} morning-only playlist source(s)`);
   }
+  const tracks = await fetchAllMusicTracks(spotifyApi, effectiveMusicConfig);
 
   if (episodes.length === 0 && tracks.length === 0) {
     console.error("❌ No content found! Check your config.yaml settings.");
@@ -540,17 +657,8 @@ async function main() {
     const newState = {
       episode_uris: currentEpisodeUris,
       last_updated: new Date().toISOString(),
+      refresh_slot: refreshWindow.slot,
     };
-
-    if (PODCAST_ONLY) {
-      // In podcast-only mode, preserve the saved music tracks from the full refresh
-      newState.music_tracks = state.music_tracks || tracks;
-      newState.last_full_refresh = state.last_full_refresh || null;
-    } else {
-      // In full refresh mode, save the music tracks for hourly podcast-only runs to reuse
-      newState.music_tracks = tracks;
-      newState.last_full_refresh = new Date().toISOString();
-    }
 
     saveState(newState);
     console.log("💾 State saved to state.json");
@@ -559,11 +667,9 @@ async function main() {
 
 /**
  * Fetches all music tracks (familiar + discovery) based on config.
- * Used by full refresh mode, and as a fallback for podcast-only mode
- * when no saved tracks exist yet.
+ * Used by both morning and evening refreshes.
  */
-async function fetchAllMusicTracks(spotifyApi, config) {
-  const musicConfig = config.music || {};
+async function fetchAllMusicTracks(spotifyApi, musicConfig) {
   const totalSongs = musicConfig.total_songs || 15;
   const hasGenres = musicConfig.genres && musicConfig.genres.length > 0;
 
