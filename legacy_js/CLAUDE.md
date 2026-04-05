@@ -8,37 +8,39 @@ Recreates Spotify's discontinued "Daily Drive" feature — a playlist that mixes
 
 ## Tech Stack
 
-- **Runtime:** Node.js (v18+)
-- **Spotify Library:** `spotify-web-api-node` — wraps the Spotify Web API
-- **Config:** YAML via `js-yaml`
+- **Runtime:** Python 3.11+
+- **HTTP/Spotify Access:** `requests` with direct Spotify Web API calls
+- **Config:** YAML via `PyYAML`
 - **Auth:** OAuth 2.0 Authorization Code flow with token persistence
 - **Scheduling:** systemd timer or cron
 
 ## Project Structure
 
 ```
-index.js              — Main script: fetches podcasts + music, mixes, updates playlist
-setup.js              — One-time OAuth setup: starts local server, catches callback, saves token
-taste-profile.js      — LLM-powered genre detection via Demeterics API
+daily_drive.py        — Main script: fetches podcasts + music, mixes, updates playlist
+daily_drive_common.py — Shared Spotify auth/config/token helpers
+setup.py              — One-time OAuth setup: starts local server, catches callback, saves token
+taste_profile.py      — LLM-powered genre detection via Demeterics API
+legacy_js/            — Old JavaScript implementation kept for reference
 config.example.yaml   — Config template with comments explaining every field
 config.yaml           — User's actual config (git-ignored, contains secrets)
 .env                  — API keys for Demeterics etc. (git-ignored)
 .spotify-token.json   — Saved OAuth tokens (git-ignored, auto-refreshed)
 state.json            — Run state cache (git-ignored, tracks last episode URIs)
 install.sh            — Quick installer for fresh Linux machines
-systemd/              — Service + timer files for auto-scheduling
-package.json          — Dependencies and npm scripts
+requirements.txt      — Python dependencies
+package.json          — Convenience wrappers for Python commands
 .gitignore            — Comprehensive protection for secrets (PUBLIC REPO)
 ```
 
 ## Key Commands
 
 ```bash
-npm install           # Install dependencies
-npm run setup         # One-time Spotify authentication (deletes old token first)
-npm start             # Run the playlist builder
-npm test              # Dry run (shows what would happen without changing the playlist)
-npm run taste         # Auto-detect genre tags via LLM (requires DEMETERICS_API_KEY in .env)
+python3 -m pip install -r requirements.txt   # Install dependencies
+python3 setup.py                             # One-time Spotify authentication (deletes old token first)
+python3 daily_drive.py                       # Run the playlist builder
+python3 daily_drive.py --dry-run             # Dry run (shows what would happen without changing the playlist)
+python3 taste_profile.py                     # Auto-detect genre tags via LLM (requires DEMETERICS_API_KEY in .env)
 ```
 
 ## Setup Workflow (for AI assistants helping users)
@@ -60,14 +62,14 @@ Copy from `config.example.yaml` and fill in:
 
 ### 3. OAuth Authentication
 - If on SSH/headless: user needs SSH tunnel: `ssh -L 8888:127.0.0.1:8888 user@server`
-- Run `npm run setup` — it deletes any old token and starts fresh OAuth flow
+- Run `python3 setup.py` — it deletes any old token and starts fresh OAuth flow
 - User opens the printed URL in their local browser and approves
 - Token saved to `.spotify-token.json`
 
 ### 4. Test and Run
-- `npm test` — dry run to verify everything works
-- `npm start` — actually update the playlist
-- If 403 Forbidden: check User Management in Dashboard, re-run `npm run setup`
+- `python3 daily_drive.py --dry-run` — dry run to verify everything works
+- `python3 daily_drive.py` — actually update the playlist
+- If 403 Forbidden: check User Management in Dashboard, re-run `python3 setup.py`
 
 ## IMPORTANT: Security (Public Repo)
 
@@ -81,10 +83,10 @@ This is a PUBLIC repository. The `.gitignore` is comprehensive but verify:
 
 ## How the Code Works
 
-### Authentication Flow (setup.js)
+### Authentication Flow (setup.py)
 1. Deletes any existing `.spotify-token.json` for clean auth
 2. Reads Spotify credentials from `config.yaml`
-3. Starts Express server on `127.0.0.1:8888`
+3. Starts a small callback server on `127.0.0.1:8888`
 4. Generates Spotify auth URL with required scopes
 5. User approves in browser → Spotify redirects with auth code
 6. Exchanges code for access + refresh tokens
@@ -102,12 +104,13 @@ user-read-recently-played
 user-top-read
 ```
 
-### Playlist Building Flow (index.js)
+### Playlist Building Flow (daily_drive.py)
 1. Loads config and tokens
 2. Auto-refreshes access token if expiring within 5 minutes
-3. Fetches latest episodes for each podcast via `getShowEpisodes()`
-4. Checks state cache — skips update if episodes haven't changed
+3. Resolves morning/evening behavior from `schedule.times` and `schedule.timezone`
+4. Fetches latest episodes for each podcast via `GET /v1/shows/{id}/episodes`
 5. Fetches music from top tracks, source playlists, and/or genre search
+6. Skips playlist sources if Spotify shows they haven't been updated in the last 24 hours
 6. Separates pinned episodes (`position: first`) from mixable episodes
 7. Places pinned episodes first, then interleaves rest using `mix_pattern`
 8. Replaces playlist content via `PUT /v1/playlists/{id}/items`
@@ -124,7 +127,7 @@ Three sources can be combined:
 
 When genres are configured alongside top tracks/playlists, the script automatically splits `total_songs` **50/50**: half familiar (top tracks + playlists), half discovery (genre search). This ensures each refresh has a mix of comfort and novelty. Discovery tracks are deduplicated against familiar tracks.
 
-### Taste Profile (taste-profile.js)
+### Taste Profile (taste_profile.py)
 Fetches user's top tracks/artists across all time ranges, sends them to an LLM via the Demeterics API (`https://api.demeterics.com/chat/v1/chat/completions`), and writes the returned genre tags into `config.yaml`. Uses the `DEMETERICS_API_KEY` from `.env`.
 
 Demeterics key modes:
@@ -211,8 +214,8 @@ schedule:
 ## Gotchas
 
 - Spotify tokens expire after 1 hour, but the script auto-refreshes them using the refresh token
-- Refresh tokens can eventually expire after months of inactivity — user must re-run `npm run setup`
-- `setup.js` deletes any existing token before starting OAuth to ensure fresh scopes
+- Refresh tokens can eventually expire after months of inactivity — user must re-run `python3 setup.py`
+- `setup.py` deletes any existing token before starting OAuth to ensure fresh scopes
 - The `/items` endpoint accepts both `spotify:track:` and `spotify:episode:` URIs
 - Spotify API rate limit is generous for personal use but can hit 429 with rapid calls
 - Podcast episode IDs change with each new episode — always fetch fresh

@@ -2,20 +2,15 @@
   "name": "dailydrive",
   "version": "1.0.0",
   "description": "Recreate Spotify's Daily Drive: auto-mix podcasts and music into one playlist",
-  "main": "index.js",
+  "main": "daily_drive.py",
   "scripts": {
-    "setup": "node setup.js",
-    "start": "node index.js",
-    "test": "node index.js --dry-run",
-    "taste": "node taste-profile.js",
-    "taste:google": "node taste-profile-google.js"
+    "setup": "python3 setup.py",
+    "start": "python3 daily_drive.py",
+    "test": "python3 daily_drive.py --dry-run",
+    "taste": "python3 taste_profile.py",
+    "taste:google": "python3 taste_profile_google.py"
   },
   "keywords": ["spotify", "daily-drive", "playlist", "podcast", "automation", "raspberry-pi", "orange-pi"],
   "license": "MIT",
-  "dependencies": {
-    "js-yaml": "^4.1.0",
-    "spotify-web-api-node": "^5.0.2",
-    "express": "^4.21.0",
-    "open": "^10.1.0"
-  }
+  "dependencies": {}
 }

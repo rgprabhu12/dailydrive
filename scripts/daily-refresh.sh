@@ -4,7 +4,7 @@
 # =============================================================================
 # Runs on a schedule (for example, your morning refresh).
 # - Fetches fresh music and podcasts every run
-# - Lets index.js choose the morning/evening profile from config.schedule
+# - Lets daily_drive.py choose the morning/evening profile from config.schedule
 # - On macOS, schedules the next day's wake times with pmset
 # - On macOS, can put the machine back to sleep after the run completes
 # - Cleans up log files older than 7 days
@@ -21,19 +21,19 @@ LOG_FILE="${LOG_DIR}/dailydrive-$(date +%Y%m%d).log"
 
 # launchd often provides a very minimal PATH, so include common Homebrew/macOS locations.
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
-NODE_BIN="${NODE_BIN:-$(command -v node || true)}"
-if [ -z "${NODE_BIN}" ] && [ -x "/opt/homebrew/bin/node" ]; then
-  NODE_BIN="/opt/homebrew/bin/node"
+PYTHON_BIN="${PYTHON_BIN:-$(command -v python3 || true)}"
+if [ -z "${PYTHON_BIN}" ] && [ -x "/opt/homebrew/bin/python3" ]; then
+  PYTHON_BIN="/opt/homebrew/bin/python3"
 fi
-if [ -z "${NODE_BIN}" ] && [ -x "/usr/local/bin/node" ]; then
-  NODE_BIN="/usr/local/bin/node"
+if [ -z "${PYTHON_BIN}" ] && [ -x "/usr/local/bin/python3" ]; then
+  PYTHON_BIN="/usr/local/bin/python3"
 fi
 
 # Make sure log directory exists
 mkdir -p "${LOG_DIR}"
 
-if [ -z "${NODE_BIN}" ]; then
-  echo "❌ node not found in PATH" >> "${LOG_FILE}"
+if [ -z "${PYTHON_BIN}" ]; then
+  echo "❌ python3 not found in PATH" >> "${LOG_FILE}"
   exit 1
 fi
 
@@ -46,11 +46,12 @@ if [ -n "${GIT_REPO}" ] && [ "${GIT_REPO}" != "${DAILYDRIVE_DIR}" ] && [ -d "${G
   echo "=== Auto-deploy: pulling latest code ===" >> "${LOG_FILE}"
   git -C "${GIT_REPO}" pull --ff-only >> "${LOG_FILE}" 2>&1 || echo "⚠️  Git pull failed (non-fatal, continuing with current code)" >> "${LOG_FILE}"
   # Sync code + config into the runtime directory (skip tokens, state, node_modules)
-  cp "${GIT_REPO}/index.js" "${DAILYDRIVE_DIR}/index.js"
-  cp "${GIT_REPO}/setup.js" "${DAILYDRIVE_DIR}/setup.js"
-  cp "${GIT_REPO}/taste-profile.js" "${DAILYDRIVE_DIR}/taste-profile.js"
-  [ -f "${GIT_REPO}/taste-profile-google.js" ] && cp "${GIT_REPO}/taste-profile-google.js" "${DAILYDRIVE_DIR}/taste-profile-google.js"
-  cp "${GIT_REPO}/package.json" "${DAILYDRIVE_DIR}/package.json"
+  [ -f "${GIT_REPO}/daily_drive.py" ] && cp "${GIT_REPO}/daily_drive.py" "${DAILYDRIVE_DIR}/daily_drive.py"
+  [ -f "${GIT_REPO}/daily_drive_common.py" ] && cp "${GIT_REPO}/daily_drive_common.py" "${DAILYDRIVE_DIR}/daily_drive_common.py"
+  [ -f "${GIT_REPO}/setup.py" ] && cp "${GIT_REPO}/setup.py" "${DAILYDRIVE_DIR}/setup.py"
+  [ -f "${GIT_REPO}/taste_profile.py" ] && cp "${GIT_REPO}/taste_profile.py" "${DAILYDRIVE_DIR}/taste_profile.py"
+  [ -f "${GIT_REPO}/taste_profile_google.py" ] && cp "${GIT_REPO}/taste_profile_google.py" "${DAILYDRIVE_DIR}/taste_profile_google.py"
+  [ -f "${GIT_REPO}/requirements.txt" ] && cp "${GIT_REPO}/requirements.txt" "${DAILYDRIVE_DIR}/requirements.txt"
   cp -r "${GIT_REPO}/scripts/"* "${DAILYDRIVE_DIR}/scripts/"
   # Config lives in the repo (gitignored) — sync it if present
   [ -f "${GIT_REPO}/config.yaml" ] && cp "${GIT_REPO}/config.yaml" "${DAILYDRIVE_DIR}/config.yaml"
@@ -61,16 +62,16 @@ fi
 # --- Run the scheduled playlist refresh ---
 echo "=== Scheduled refresh started at $(date) ===" >> "${LOG_FILE}"
 cd "${DAILYDRIVE_DIR}"
-"${NODE_BIN}" index.js >> "${LOG_FILE}" 2>&1
+"${PYTHON_BIN}" daily_drive.py >> "${LOG_FILE}" 2>&1
 EXIT_CODE=$?
 echo "=== Scheduled refresh finished at $(date) (exit code: ${EXIT_CODE}) ===" >> "${LOG_FILE}"
 echo "" >> "${LOG_FILE}"
 
 RUN_POWER_ACTIONS=false
 if [ "${EXIT_CODE}" -eq 0 ] && [ "$(uname -s)" = "Darwin" ] && command -v pmset >/dev/null 2>&1; then
-  MORNING_TIME="$("${NODE_BIN}" -e "const fs=require('fs'); const yaml=require('js-yaml'); const config=yaml.load(fs.readFileSync('config.yaml','utf8')); const times=(config.schedule && Array.isArray(config.schedule.times)) ? config.schedule.times : []; if (!times[0]) process.exit(1); process.stdout.write(times[0]);" 2>>"${LOG_FILE}" || true)"
-  EVENING_TIME="$("${NODE_BIN}" -e "const fs=require('fs'); const yaml=require('js-yaml'); const config=yaml.load(fs.readFileSync('config.yaml','utf8')); const times=(config.schedule && Array.isArray(config.schedule.times)) ? config.schedule.times : []; if (!times[1]) process.exit(1); process.stdout.write(times[1]);" 2>>"${LOG_FILE}" || true)"
-  TIMEZONE="$("${NODE_BIN}" -e "const fs=require('fs'); const yaml=require('js-yaml'); const config=yaml.load(fs.readFileSync('config.yaml','utf8')); const tz=config.schedule && config.schedule.timezone; if (!tz) process.exit(1); process.stdout.write(tz);" 2>>"${LOG_FILE}" || true)"
+  MORNING_TIME="$("${PYTHON_BIN}" -c "import yaml; print((yaml.safe_load(open('config.yaml')) or {}).get('schedule', {}).get('times', [''])[0], end='')" 2>>"${LOG_FILE}" || true)"
+  EVENING_TIME="$("${PYTHON_BIN}" -c "import yaml; times=((yaml.safe_load(open('config.yaml')) or {}).get('schedule', {}).get('times', ['', ''])); print(times[1] if len(times) > 1 else '', end='')" 2>>"${LOG_FILE}" || true)"
+  TIMEZONE="$("${PYTHON_BIN}" -c "import yaml; print(((yaml.safe_load(open('config.yaml')) or {}).get('schedule', {}) or {}).get('timezone', ''), end='')" 2>>"${LOG_FILE}" || true)"
   CURRENT_TIME="$(TZ="${TIMEZONE:-$(date +%Z)}" date '+%H:%M')"
 
   if [ -n "${MORNING_TIME}" ] && [ "${CURRENT_TIME}" = "${MORNING_TIME}" ]; then

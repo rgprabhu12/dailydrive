@@ -102,7 +102,7 @@ Paste in your **Client ID**, **Client Secret**, **Playlist ID**, and your **podc
 ### Step 5: Log in to Spotify (one time only)
 
 ```bash
-npm run setup
+python3 setup.py
 ```
 
 This prints a URL. Open it in your browser, log into Spotify, and click **Agree**. The script saves your login token locally — you only do this once.
@@ -111,14 +111,14 @@ This prints a URL. Open it in your browser, log into Spotify, and click **Agree*
 > ```bash
 > ssh -L 8888:127.0.0.1:8888 user@your-server
 > ```
-> Then run `npm run setup` on the server, and open the URL in your **local** browser.
+> Then run `python3 setup.py` on the server, and open the URL in your **local** browser.
 
 ---
 
 ### Step 6: Build your playlist!
 
 ```bash
-npm start
+python3 daily_drive.py
 ```
 
 Open Spotify — your playlist is now filled with a fresh mix of podcasts and music!
@@ -220,8 +220,8 @@ crontab -e
 Add these lines (refreshes at 4 AM and 4 PM daily):
 
 ```
-0 4 * * * cd /home/$USER/dailydrive && /usr/bin/node index.js >> /tmp/dailydrive.log 2>&1
-0 16 * * * cd /home/$USER/dailydrive && /usr/bin/node index.js >> /tmp/dailydrive.log 2>&1
+0 4 * * * cd /home/$USER/dailydrive && /usr/bin/python3 daily_drive.py >> /tmp/dailydrive.log 2>&1
+0 16 * * * cd /home/$USER/dailydrive && /usr/bin/python3 daily_drive.py >> /tmp/dailydrive.log 2>&1
 ```
 
 The first scheduled time is treated as the morning refresh and can include `music.morning_playlists`. The second is treated as the evening refresh and skips those sources.
@@ -234,11 +234,11 @@ That's it — your Daily Drive is back on autopilot.
 
 | Command | What it does |
 |---------|-------------|
-| `npm run setup` | Log in to Spotify (one time, or if token expires) |
-| `npm start` | Build/refresh the playlist now |
-| `npm test` | Dry run — shows what would happen without changing anything |
-| `npm run taste` | Auto-detect your music genres using AI (Demeterics) |
-| `npm run taste:google` | Auto-detect your music genres using AI (Google Gemini — free) |
+| `python3 setup.py` | Log in to Spotify (one time, or if token expires) |
+| `python3 daily_drive.py` | Build/refresh the playlist now |
+| `python3 daily_drive.py --dry-run` | Dry run — shows what would happen without changing anything |
+| `python3 taste_profile.py` | Auto-detect your music genres using AI (Demeterics) |
+| `python3 taste_profile_google.py` | Auto-detect your music genres using AI (Google Gemini — free) |
 
 ---
 
@@ -246,12 +246,12 @@ That's it — your Daily Drive is back on autopilot.
 
 | Problem | Fix |
 |---------|-----|
-| `Not authenticated!` | Run `npm run setup` |
+| `Not authenticated!` | Run `python3 setup.py` |
 | `config.yaml not found!` | Run `cp config.example.yaml config.yaml` and edit it |
-| `Token expired` | Run `npm run setup` again |
-| `403 Forbidden` | Go to [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard) → your app → Settings → User Management → add your Spotify email. Then re-run `npm run setup` |
+| `Token expired` | Run `python3 setup.py` again |
+| `403 Forbidden` | Go to [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard) → your app → Settings → User Management → add your Spotify email. Then re-run `python3 setup.py` |
 | `404 Not Found` | Double-check your podcast/playlist IDs in config.yaml |
-| Playlist is empty after running | Run `npm test` to see if podcasts/playlists are returning results |
+| Playlist is empty after running | Run `python3 daily_drive.py --dry-run` to see if podcasts/playlists are returning results |
 
 ---
 
@@ -273,7 +273,7 @@ Uses the Google Gemini API free tier. No credit card required.
    ```
 6. Run:
    ```bash
-   npm run taste:google
+   python3 taste_profile_google.py
    ```
 
 Free tier limits: 15 requests/minute, 1M tokens/day — more than enough for this.
@@ -289,7 +289,7 @@ Uses the [Demeterics](https://demeterics.ai) API — an LLM observability platfo
    ```
 3. Run:
    ```bash
-   npm run taste
+   python3 taste_profile.py
    ```
 
 | Mode | How | Fee |
@@ -301,13 +301,13 @@ Uses the [Demeterics](https://demeterics.ai) API — an LLM observability platfo
 
 ## How It Works
 
-1. **Auth:** OAuth 2.0 — `setup.js` runs a local server, you log in via browser, tokens are saved and auto-refresh
+1. **Auth:** OAuth 2.0 — `setup.py` runs a local server, you log in via browser, tokens are saved and auto-refresh
 2. **Podcasts:** Fetches latest episodes from each show via Spotify API
 3. **Music:** Pulls from your top tracks, genre search, and/or playlists — pools, shuffles, and trims
 4. **Mix:** Pins episodes marked `position: first`, then interleaves the rest using your mix pattern
 5. **Update:** Replaces the playlist contents via the Spotify API
 
-The script caches state in `state.json` — if nothing changed since last run, it skips the update. Delete `state.json` to force a refresh.
+The script caches state in `state.json` for metadata about the last refresh. Delete `state.json` if you want to clear that history.
 
 ---
 
